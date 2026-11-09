@@ -4,7 +4,7 @@ package PPOBackend::MySQL;
 
 # $Id: MySQL.pm,v 1.11 2010-03-23 13:57:51 paczian Exp $
 
-use Carp::Always;
+#use Carp::Always;
 use strict;
 use warnings;
 
@@ -12,6 +12,8 @@ use DBI;
 use Tracer;
 
 use base qw( PPOBackend );
+use POSIX ();
+use IO::Handle;
 
 1;
 
@@ -60,18 +62,21 @@ sub new {
   Trace("PPO connect string is $connect") if T(PPOBackend => 3);
   # initialize database handle.
     my $olderr;
-
-	open($olderr, ">&", STDERR);
-	close(STDERR);
-	open(STDERR, ">", "/dev/null");
+    my $nullfh;
+    STDERR->flush();
+    open($nullfh, ">", "/dev/null");
+    $olderr = POSIX::dup(2);
+    POSIX::dup2(fileno($nullfh), 2) if defined $olderr;
 
   my $dbh = DBI->connect($connect, $user, $password, 
 			 { RaiseError => 1, AutoCommit => 0, PrintError => 0 }) ||
 			   Confess("Database connect error.");
     if ($olderr)
     {
-	close(STDERR);
-	open(STDERR, ">&", $olderr);
+	STDERR->flush();
+	POSIX::dup2($olderr, 2);
+	POSIX::close($olderr);
+	close($nullfh);
     }
   
   my $self = { 'dbhandle' => $dbh,
@@ -128,9 +133,23 @@ sub new_from_connect_data {
   $password = (defined $password) ? $password : '';
   Trace("PPO reconnect string is $connect") if T(PPOBackend => 3);
   # initialize database handle
+  # (suppress libmysqlclient's MYSQL_OPT_RECONNECT deprecation write on fd 2,
+  #  same as in new() above)
+  my $olderr;
+  my $nullfh;
+  STDERR->flush();
+  open($nullfh, ">", "/dev/null");
+  $olderr = POSIX::dup(2);
+  POSIX::dup2(fileno($nullfh), 2) if defined $olderr;
   my $dbh = DBI->connect($connect, $user, $password, 
 			 { RaiseError => 1, AutoCommit => 0, PrintError => 0 }) ||
             Confess("Database connect error.");
+  if ($olderr) {
+      STDERR->flush();
+      POSIX::dup2($olderr, 2);
+      POSIX::close($olderr);
+      close($nullfh);
+  }
 
   my $self = { 'dbhandle' => $dbh,
 	       'source'   => $database,
